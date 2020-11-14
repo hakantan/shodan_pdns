@@ -1,0 +1,7 @@
+# files
+apikeys.yaml
+*.csv
+*.ipynb_checkpoints
+.DS_Store
+*.py
+
