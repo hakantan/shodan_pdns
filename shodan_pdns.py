@@ -180,8 +180,7 @@ if __name__ == '__main__':
         old_df = create_empty_dataframe()
 
     # an emtpy dataframe, that we're going to populate with our new findings
-    query_df = pd.DataFrame(columns=['hash', 'hostnames', 'ip_str', 'asn', 'isp', 'domains', 'timestamp',
-                                     'ssl_fingerprint', 'ssl_serial'])
+    query_df = create_empty_dataframe()
 
     check_results = compare_dataframes(new_df, old_df)
 
