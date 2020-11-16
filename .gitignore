@@ -1,7 +1,10 @@
 # files
 apikeys.yaml
 *.csv
+
+# env
 *.ipynb_checkpoints
 .DS_Store
-*.py
+.vscode/
+
 
