@@ -7,6 +7,7 @@ import datetime
 import yaml
 import sys
 from os import chdir
+import logging
 
 # enter auth
 with open('apikeys.yaml', 'r') as api_keys:
@@ -26,6 +27,7 @@ SEARCH_QUERY = 'ssl:196113228a9c7dc615a43c4431dc2bb327c43b2c'
 
 # results will be stored in this folder later on
 SEARCH_RESULTS = '/results'
+SEARCH_LOGS = '/logs'
 
 # Preparing the file for saving, we need a timestamp
 TIME_NOW = datetime.datetime.today().strftime('%Y-%m-%d')
@@ -46,16 +48,20 @@ def shodan_search(query):
         # But if the list stored in that dict has a length of 0
         # the request was successful, but there were no results.
         if len(json_response['matches']) == 0:
+            logger.debug('Request went through, no results.')
             return None
 
         else:
+            logger.debug('Request went through.')
             for match in json_response['matches']:
                 results.append(match)
             return results
 
     # if there is something wrong with the request, give back the error
     else:
-        return f'There was a problem with the request: The error code is: {resp.status_code}'
+        logger.error(
+            f'There was a problem with the request: The error code is: {resp.status_code}')
+        return None
 
 
 def process_results(search_results):
@@ -88,6 +94,8 @@ def compare_dataframes(new_dataframe, old_dataframe):
     # and check the complete dataframe, one by one. Then we'll repeat.
     # Two loops are needed.
     for index_one, row_one in new_dataframe.iterrows():
+        logger.debug(
+            'Starting first loop, with IP address "{}".'.format(row_one['ip_str']))
 
         # Since we haven't found anything yet, this variable equals False
         found = False
@@ -100,6 +108,8 @@ def compare_dataframes(new_dataframe, old_dataframe):
 
                 # since we have found a match, we had this result already. We're breaking out of the loop and moving on.
                 found = True
+                logger.debug(
+                    f'Variable found is {found}, breaking out of loop.')
                 break
 
             # Since we're looping through a complete list, many of the results won't match.
@@ -111,6 +121,7 @@ def compare_dataframes(new_dataframe, old_dataframe):
         # If we've gone through all the items and still haven't found anything, then we got a new item.
         # We'll populate the empty dataframe with the results.
         if not found:
+            logger.debug(f'Populating the "final_df" with new findings.')
             final_df = query_df.append(new_dataframe.iloc[index_one])
 
     # check if final_df is still None. If not, there are some results to work with.
@@ -118,42 +129,67 @@ def compare_dataframes(new_dataframe, old_dataframe):
         return final_df
 
     else:
+        logger.info('Final df was not created.')
         return None
 
 
-def create_folder(main, results):
+def create_folder(query, result, logger):
 
     # the queries have a colon, that's not a workable solution for storing them on disk
     # so we're going to replace them with an underscore when creating the folder
     # the exist_ok-option checks if the file exists and doesn't raise an error if it does.
-    query_path = main.replace(':', '_')
+    query_path = query.replace(':', '_')
     Path(query_path).mkdir(exist_ok=True)
 
-    result_path = query_path + results
+    result_path = query_path + result
     Path(result_path).mkdir(exist_ok=True)
+
+    logging_path = query_path + logger
+    Path(logging_path).mkdir(exist_ok=True)
 
     return query_path, result_path
 
 
 def change_folder(start_here, switch_to):
+    #logger.debug('Switching directories. Right now in:', Path.cwd())
     chdir(start_here)
+    #logger.debug('Switching directories. Right now in:', Path.cwd())
     chdir(switch_to)
+    #logger.debug('Switching directories. Right now in:', Path.cwd())
 
 
 def create_empty_dataframe():
     empty_dataframe = pd.DataFrame(columns=['hash', 'hostnames', 'ip_str', 'asn', 'isp', 'domains', 'timestamp',
                                             'ssl_fingerprint', 'ssl_serial'])
+    logger.debug('An empty dataframe was created.')
     return empty_dataframe
+
+
+def start_logging():
+    # setting up logger
+    logs = logging.getLogger(__name__)
+    # Log levels at
+    # https://docs.python.org/3/library/logging.html#levels
+    logs.setLevel(logging.DEBUG)
+    formatter = logging.Formatter(
+        '%(asctime)s %(levelname)s %(funcName)s %(message)s')
+
+    file_handler = logging.FileHandler(
+        f'.{SEARCH_LOGS}/script_{TIME_NOW}.log')
+    file_handler.setFormatter(formatter)
+    logs.addHandler(file_handler)
+    return logs
 
 
 if __name__ == '__main__':
 
     # create folders to save files in
     start_folder = Path.cwd()
-    working_folders = create_folder(SEARCH_QUERY, SEARCH_RESULTS)
+    working_folders = create_folder(SEARCH_QUERY, SEARCH_RESULTS, SEARCH_LOGS)
     main_folder = working_folders[0]
     result_folder = working_folders[1]
     change_folder(start_folder, main_folder)
+    logger = start_logging()
 
     # start the query, process the api results, generate a Dataframe
     start_search = shodan_search(SEARCH_QUERY)
@@ -167,6 +203,7 @@ if __name__ == '__main__':
     # There are no results to work with. We're creating an empty dataframe
     # storing it as csv and exiting the script.
     else:
+        logger.info('No files found. Saving as empty.csv and exiting.')
         empty_df = create_empty_dataframe()
         change_folder(start_folder, result_folder)
         empty_df.to_csv(TIME_NOW + '_empty.csv', index=False)
@@ -176,20 +213,20 @@ if __name__ == '__main__':
     try:
         old_df = pd.read_csv('old_df.csv')
     except FileNotFoundError as e:
-        print('File not found, creating empty dataframe.')
+        logger.info('File not found, creating empty dataframe.')
         old_df = create_empty_dataframe()
 
     # an emtpy dataframe, that we're going to populate with our new findings
     query_df = create_empty_dataframe()
-
+    logger.debug('Empty database "query_df" created.')
     check_results = compare_dataframes(new_df, old_df)
 
-    if not check_results.empty:
+    if isinstance(check_results, pd.DataFrame):
         for index, row in check_results.iterrows():
-            print('There are new results: {}'.format(row['ip_str']))
+            logger.debug('There are new results: {}'.format(row['ip_str']))
 
     else:
-        print('There are no new findings.')
+        logger.debug('There are no new findings.')
 
     # we're saving the new results in a timestamped-file
     change_folder(start_folder, result_folder)
